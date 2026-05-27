@@ -1,0 +1,54 @@
+venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets — never commit.
+.env
+secrets.env
+*.env
+**/hik_session.json
+**/hik_devices.json
+**/raw_devices.json
+**/hik_login_real.json
+
+# Captures, outputs, logs
+logs/
+processed_clips/
+*.log
+*.mp4
+*.ts
+*.pcap
+*.m3u8
+.session
+
+# Huge RE leftovers — not needed to USE the tool.
+# (Re-fetch the APK + run jadx if you want to read the .so yourself.)
+apk/
+ndk/
+sdk/
+frida/
+cpp/
+*.so
+*.apk
+
+# stray git remnants from vendored SDKs
+sdk/**/.git/
+
+# Pre-breakthrough RE detritus — keep only the production pipeline
+sysroot/
+run.sh
+scripts/aosp_arm64_sysroot.sh
+scripts/stage_sysroot.sh
+scripts/capture_real_app.sh
+scripts/cas_capture.py
+scripts/hik_cas.py
+scripts/hik_consume.py
+scripts/hik_get_stream.py
+scripts/hik_vtm_stream.py
+scripts/hik_stream.py
+scripts/try_library.py
+scripts/udp_to_rtsp.py
+scripts/gpu_process.py
+scripts/demo_live_stream.sh
+secrets.env.example
