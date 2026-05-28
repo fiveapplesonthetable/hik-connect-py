@@ -227,8 +227,32 @@ def recv_packet(sock: socket.socket) -> tuple[VtmHeader, bytes] | None:
 
 # ---------- REST API ----------
 
+def _load_secrets() -> dict:
+    """Read HIK_EMAIL/HIK_PASSWORD from secrets.env at project root, if present.
+    Used for auto-re-login when the cached session expires (~24h)."""
+    p = Path(__file__).resolve().parent.parent / "secrets.env"
+    out: dict = {}
+    if not p.exists():
+        return out
+    for line in p.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip()
+    return out
+
+
+_SECRETS = _load_secrets()
+
+
 class HikSession:
-    """Hik-Connect REST session — persistent across runs via logs/hik_session.json."""
+    """Hik-Connect REST session — persistent across runs via logs/hik_session.json.
+
+    REST calls auto-retry once on HTTP 401 by re-logging in using HIK_EMAIL /
+    HIK_PASSWORD from secrets.env. This keeps the long-running viewer server
+    healthy across the 24h JWT expiry window without manual intervention.
+    """
 
     def __init__(self, session_id: str, api_domain: str, username: str,
                  feature_code: str = FEATURE_CODE):
@@ -304,38 +328,68 @@ class HikSession:
             "featureCode": self.feature_code,
         }, indent=2))
 
+    # --- session-refresh helpers ---
+
+    def _relogin(self) -> bool:
+        """Refresh the cached session using credentials from secrets.env.
+        Returns True if the new session has been adopted in-place."""
+        email = _SECRETS.get("HIK_EMAIL")
+        password = _SECRETS.get("HIK_PASSWORD")
+        if not email or not password:
+            print("[hik] session expired but no HIK_EMAIL/HIK_PASSWORD "
+                  "in secrets.env — cannot re-login", file=sys.stderr)
+            return False
+        try:
+            new = HikSession.login(email, password,
+                                   feature_code=self.feature_code)
+        except Exception as e:
+            print(f"[hik] re-login failed: {e}", file=sys.stderr)
+            return False
+        self.session_id = new.session_id
+        self.api_domain = new.api_domain
+        self.username = new.username
+        self.save()
+        print(f"[hik] session refreshed (username={self.username})",
+              file=sys.stderr)
+        return True
+
+    def _request(self, method: str, path: str, *,
+                 params: dict | None = None,
+                 data: dict | None = None) -> requests.Response:
+        """REST call with one 401 retry via _relogin(). path is appended to
+        self.base each attempt (apiDomain may rotate after re-login)."""
+        for attempt in (1, 2):
+            r = requests.request(
+                method, f"{self.base}{path}",
+                headers=self._headers, params=params, data=data, timeout=15,
+            )
+            if r.status_code == 401 and attempt == 1 and self._relogin():
+                continue
+            r.raise_for_status()
+            return r
+        return r  # unreachable; loop returns or raises
+
     # --- REST calls ---
 
     def devices(self) -> dict:
-        r = requests.get(
-            f"{self.base}/v3/userdevices/v1/devices/pagelist",
-            headers=self._headers,
+        return self._request(
+            "GET", "/v3/userdevices/v1/devices/pagelist",
             params={"filter": "CONNECTION,KMS_INFO,P2P_INFO,CAMERA",
                     "groupId": "-1", "limit": 30, "offset": 0},
-            timeout=15,
-        )
-        r.raise_for_status()
-        return r.json()
+        ).json()
 
     def token_batch(self, count: int = 10) -> list[str]:
         """Get N short-lived stream tokens. The SDK pre-fetches in batches of
         50; refill when fewer than ~10 remain or after >5 minutes."""
-        r = requests.post(
-            f"{self.base}/api/user/token/get",
-            headers=self._headers,
+        return self._request(
+            "POST", "/api/user/token/get",
             data={"featureCode": self.feature_code, "count": count},
-            timeout=15,
-        )
-        r.raise_for_status()
-        return r.json().get("tokenArray", [])
+        ).json().get("tokenArray", [])
 
     def vtm(self, serial: str, channel: int) -> dict:
-        r = requests.get(
-            f"{self.base}/v3/streaming/vtm/{serial}/{channel}",
-            headers=self._headers, timeout=15,
-        )
-        r.raise_for_status()
-        return r.json()["streamServerConfig"]
+        return self._request(
+            "GET", f"/v3/streaming/vtm/{serial}/{channel}",
+        ).json()["streamServerConfig"]
 
 
 # ---------- VTM stream client ----------
