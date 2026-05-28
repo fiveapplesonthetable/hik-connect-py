@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>hik-viewer · live cams</title>
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.13/dist/hls.min.js"></script>
+<script src="/static/app.js" defer></script>
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">hik-viewer</span>
+    <span class="sub" id="device-label">…</span>
+  </div>
+  <div class="controls">
+    <button id="start-all" class="primary">start all</button>
+    <button id="stop-all">stop all</button>
+    <button id="refresh" class="ghost" title="Re-check status">refresh</button>
+  </div>
+</header>
+
+<main id="grid"></main>
+
+<div id="fullscreen" class="hidden" tabindex="0">
+  <button class="close" aria-label="close">×</button>
+  <video id="fs-video" controls playsinline></video>
+  <div class="caption" id="fs-label"></div>
+</div>
+
+<footer>
+  <small>HLS · 2 s segments · video-only (H.264). Pipelines idle-stop after 60 s with no viewer.</small>
+</footer>
+
+</body>
+</html>

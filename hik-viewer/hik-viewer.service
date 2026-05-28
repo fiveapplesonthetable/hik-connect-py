@@ -1,0 +1,13 @@
+[Unit]
+Description=hik-viewer (FastAPI live-cam mosaic on 0.0.0.0:8766)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/mnt/agent/hik-viewer/app
+ExecStart=/mnt/agent/hik-viewer/app/run-server.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

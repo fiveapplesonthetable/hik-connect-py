@@ -26,6 +26,7 @@ PCAPdroid wire capture, what we learned, and a code map of
 | Path | Purpose |
 |---|---|
 | `scripts/hik.py` | The CLI: `login` / `list` / `probe` / `stream` / `ffmpeg` / `refresh` |
+| `ARCHITECTURE.md` | Wire protocol, decode pipeline, server + front-end design |
 | `TUTORIAL.md` | Honest ground-up RE writeup |
 | `docs/vtm_redirect_re.md` | Code map of `libezstreamclient.so` paths we explored |
 | `docs/ecdh_layer_re.md` | The (unused-for-cloud-preview) ECDH envelope wire format |
@@ -33,10 +34,34 @@ PCAPdroid wire capture, what we learned, and a code map of
 | `scripts/hik_ecdh.py` | Pure-Python ECDH envelope encoders, round-trip tested |
 | `scripts/hik_login_probe.py` | RE helper for the login endpoint |
 | `scripts/hik_list_devices.py` | RE helper for device-metadata enumeration |
+| `hik-viewer/app/` | FastAPI live-cam mosaic, serves HLS on `:8766` |
+| `hik-viewer/web/` | Strict-TypeScript front-end (compiles to `app/static/app.js`) |
+| `hik-viewer/hik-viewer.service` | systemd-user unit |
 
-A live web mosaic UI is kept at `/mnt/agent/hik-viewer/` (separate dir, not
-in this repo). It serves HLS per channel and runs as a systemd-user service
-on port 8766.
+## The web mosaic
+
+A phone-friendly browser mosaic of every live cam. Read **ARCHITECTURE.md**
+for the full design; quick-start:
+
+```bash
+# Install Python deps
+python3 -m venv venv && . venv/bin/activate
+pip install -q requests cryptography fastapi 'uvicorn[standard]'
+
+# Log in + cache live channel list (filters out DVR placeholders)
+python3 scripts/hik.py login --email a@b.com --password 'secret'
+python3 scripts/hik.py probe
+
+# Build the TypeScript front-end
+cd hik-viewer/web && npm install && npm run build && cd ../..
+
+# Run the server (or install hik-viewer.service for systemd-user)
+hik-viewer/app/run-server.sh    # → http://localhost:8766/
+```
+
+Click "start all" to begin streaming. Cards never auto-start; pipelines
+idle-stop after 60 s with no viewer and auto-respawn when the cloud closes
+the upstream socket.
 
 ## CLI reference
 

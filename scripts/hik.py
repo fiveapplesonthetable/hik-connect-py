@@ -741,6 +741,8 @@ def cmd_ffmpeg(args) -> int:
         inputs += ["-thread_queue_size", "512",
                    "-f", "mulaw", "-ar", "8000", "-ac", "1", "-i", f"pipe:{a_r}"]
 
+    # Stream-copy video — the cameras already emit H.264. We just need the
+    # HLS segment time set high enough to span at least one IDR keyframe.
     if args.video and args.audio:
         maps = ["-map", "0:v:0", "-map", "1:a:0"]
         codecs = ["-c:v", "copy",
@@ -757,11 +759,15 @@ def cmd_ffmpeg(args) -> int:
         out_dir.mkdir(parents=True, exist_ok=True)
         for f in list(out_dir.glob("*.ts")) + list(out_dir.glob("*.m3u8")):
             f.unlink(missing_ok=True)
+        # Stream-copy → segments break at incoming keyframes. Hik cams emit
+        # IDR every 1-4 s. hls_time=2 gives faster first-segment but we need
+        # split_by_time so HLS doesn't wait forever for a key on slow cameras.
         ff_out = [
             "-f", "hls",
             "-hls_time", "2",
-            "-hls_list_size", "6",
-            "-hls_flags", "delete_segments+independent_segments+omit_endlist",
+            "-hls_list_size", "8",
+            "-hls_flags", "delete_segments+independent_segments+omit_endlist+split_by_time",
+            "-hls_segment_type", "mpegts",
             "-hls_segment_filename", str(out_dir / "seg_%05d.ts"),
             "-y", str(out_dir / "index.m3u8"),
         ]
@@ -805,7 +811,14 @@ def cmd_ffmpeg(args) -> int:
 
 
 def cmd_probe(args) -> int:
-    """Probe every channel up to N to find which ones have a live camera."""
+    """Probe every channel to find which ones have a *real* camera connected.
+
+    The DVR emits a placeholder "NO VIDEO" H.264 stream on channels whose
+    physical camera input is unplugged — receiving packets is therefore NOT
+    enough to tell "live" from "placeholder". We use a bytes-per-second
+    threshold: real 1080p feeds run 200+ KB/s; the static placeholder is
+    typically <30 KB/s. Threshold default is configurable via --min-kbps.
+    """
     sess = HikSession.load()
     if sess is None:
         raise SystemExit("no session — run `hik.py login` first")
@@ -817,7 +830,11 @@ def cmd_probe(args) -> int:
         if d.get("deviceSerial") == serial:
             nchan = int(d.get("channelNumber", 1))
             break
-    print(f"[*] probing {serial} channels 1..{nchan} (3s each)…", file=sys.stderr)
+    probe_secs = float(getattr(args, "probe_secs", 4.0))
+    min_kbps = float(getattr(args, "min_kbps", 60.0))
+    print(f"[*] probing {serial} channels 1..{nchan} "
+          f"({probe_secs:.1f}s each, ≥{min_kbps:.0f} KB/s = real)…",
+          file=sys.stderr)
     alive = []
     for ch in range(1, nchan + 1):
         try:
@@ -825,20 +842,40 @@ def cmd_probe(args) -> int:
         except Exception as e:
             print(f"  ch{ch:02d}: SETUP FAIL ({e!s:.60})", file=sys.stderr)
             continue
-        # try receiving one packet — if we get bytes within 3s, channel is live
-        handle.socket.settimeout(3.0)
-        live = False
+        handle.socket.settimeout(1.5)
+        total = 0
+        t0 = time.time()
         try:
-            pkt = recv_packet(handle.socket)
-            if pkt is not None:
-                live = True
+            while time.time() - t0 < probe_secs:
+                pkt = recv_packet(handle.socket)
+                if pkt is None:
+                    break
+                # recv_packet returns (header, body)
+                _hdr, body = pkt
+                total += len(body)
         except (socket.timeout, TimeoutError):
             pass
-        handle.socket.close()
-        print(f"  ch{ch:02d}: {'LIVE' if live else 'silent'}", file=sys.stderr)
-        if live:
-            alive.append(ch)
-    print(f"\n[OK] live channels on {serial}: {alive}")
+        finally:
+            handle.socket.close()
+        elapsed = max(time.time() - t0, 0.01)
+        kbps = (total / 1024.0) / elapsed
+        # Receiving zero bytes → channel disabled. Any traffic at all → "live"
+        # for back-compat (the cloud lists the channel as configured), but
+        # we additionally tag it as a "placeholder" if it's below threshold
+        # so the UI/server can hide it.
+        real = total > 0 and kbps >= min_kbps
+        if total > 0:
+            alive.append(ch if real else -ch)   # negative ch = placeholder
+        tag = ("LIVE" if real else
+               ("placeholder" if total > 0 else "silent"))
+        print(f"  ch{ch:02d}: {tag} ({total/1024:.0f} KiB in {elapsed:.1f}s "
+              f"= {kbps:.0f} KB/s)", file=sys.stderr)
+    real_chans = [c for c in alive if c > 0]
+    placeholder = [-c for c in alive if c < 0]
+    print(f"\n[OK] live channels on {serial}: {real_chans}")
+    if placeholder:
+        print(f"[OK] placeholder channels on {serial}: {placeholder}",
+              file=sys.stderr)
     return 0
 
 
@@ -911,6 +948,11 @@ def main() -> int:
 
     pp = sub.add_parser("probe", help="find which channels have a live camera")
     pp.add_argument("--serial")
+    pp.add_argument("--probe-secs", type=float, default=4.0,
+                    help="seconds to receive per channel (default 4)")
+    pp.add_argument("--min-kbps", type=float, default=60.0,
+                    help="real camera threshold in KB/s "
+                         "(default 60; below this is treated as DVR placeholder)")
     pp.set_defaults(func=cmd_probe)
 
     pr = sub.add_parser("refresh", help="check if cached session is still valid")

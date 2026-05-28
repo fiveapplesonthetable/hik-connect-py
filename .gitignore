@@ -3,6 +3,13 @@ __pycache__/
 *.pyc
 *.pyo
 
+# Front-end build: only the compiled app.js is committed (runtime artifact).
+hik-viewer/web/node_modules/
+
+# Runtime HLS output + per-channel ffmpeg logs (regenerated on server start).
+hik-viewer/hls/
+hik-viewer/logs/
+
 # Secrets — never commit.
 .env
 secrets.env
@@ -21,6 +28,8 @@ processed_clips/
 *.pcap
 *.m3u8
 .session
+# Negate: TypeScript source uses .ts too. Keep web/src tracked.
+!hik-viewer/web/src/*.ts
 
 # Huge RE leftovers — not needed to USE the tool.
 # (Re-fetch the APK + run jadx if you want to read the .so yourself.)
