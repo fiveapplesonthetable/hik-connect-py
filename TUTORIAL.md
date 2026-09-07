@@ -191,7 +191,7 @@ Server responds with:
 field 1 result     = 0     (success)
 field 2 datakey    = uint32 (e.g. 63978)
 field 3 streamhead = base64-encoded IMKH init header (~56 bytes)
-field 4 streamssn  = "streamssn-redacted"
+field 4 streamssn  = "streamssn<redacted-session-id>"
 ```
 
 If you got `result=6106` here: that channel has no camera attached (DVR slot
